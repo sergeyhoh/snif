@@ -1,6 +1,8 @@
 import logging
+
 logging.getLogger("scapy.runtime").setLevel(logging.ERROR)  # Shut up Scapy
 from scapy.all import *
+
 conf.verb = 0
 import os
 import re
@@ -49,13 +51,14 @@ class WifiSniffDaemon(Daemon):
         self.sniffclients = []
         self.sniffclients_info = []
         self.sniffinfo = {}
+        self.day_sniffinfo = {}
 
         self.monitor_on = self.is_monitor_on(self.INTERFACE)
 
     def packet_handler(self, pkt):
         # global last_save_time
 
-        mgmt_type = 0   # management frame type
+        mgmt_type = 0  # management frame type
         # 3 management frame subtypes sent exclusively by clients
         mgmt_sub_types = 4
 
@@ -75,24 +78,28 @@ class WifiSniffDaemon(Daemon):
             extra = None
 
         if extra is not None:
-            signal_strength = -(256-ord(extra[-4:-3]))
+            signal_strength = -(256 - ord(extra[-4:-3]))
         else:
             signal_strength = -100
 
         # Store observed client info
         dtn = datetime.now()
-        if self.sniffinfo.get(pkt.addr2) is None or (dtn - self.sniffinfo[pkt.addr2]).seconds < self.SAVE_INTERVAL+1:
+        if self.day_sniffinfo.get(pkt.addr2) is None or self.day_sniffinfo[pkt.addr2].date() < datetime.today().date():
             print "Source: %s SSID: %s RSSi: %d" % (
                 pkt.addr2, pkt.getlayer(Dot11ProbeReq).info, signal_strength
             )
             self.sniffinfo[pkt.addr2] = dtn
+            self.day_sniffinfo[pkt.addr2] = dtn
 
     def save_sniff_log(self, file_name):
         while 1:
             tmp_sniffinfo = self.sniffinfo
-            self.sniffinfo = {}
 
-            fn = '/overlay/scripts/' + file_name+'_'+datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+            self.sniffinfo = {}
+            self.day_sniffinfo = {key: value for key, value in self.day_sniffinfo.items() if
+                                  value.date() == datetime.today().date()}
+
+            fn = '/overlay/scripts/' + file_name + '_' + datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%fZ")
             with open(fn, 'w') as f:
                 for smac, stime in tmp_sniffinfo.items():
                     f.write("smac: %s; time: %s\n" % (smac, timestamp(stime)))
@@ -122,7 +129,7 @@ class WifiSniffDaemon(Daemon):
     @staticmethod
     def hw_mac_addr(interface):
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        info = fcntl.ioctl(s.fileno(), 0x8927,  struct.pack('256s', interface[:15]))
+        info = fcntl.ioctl(s.fileno(), 0x8927, struct.pack('256s', interface[:15]))
         return ''.join(['%02x:' % ord(char) for char in info[18:24]])[:-1]
 
     @staticmethod
@@ -136,10 +143,10 @@ class WifiSniffDaemon(Daemon):
     def mac_int2hex(mac_int):
         if is_int_str(mac_int):
             mac_hex = '%012x' % mac_int
-            return ':'.join([mac_hex[i:i+2] for i in range(0, 12, 2)])
+            return ':'.join([mac_hex[i:i + 2] for i in range(0, 12, 2)])
 
     def enable_mon_mode(self, interface):
-        print 'Starting monitor mode off '+interface
+        print 'Starting monitor mode off ' + interface
         try:
             os.system('ifconfig %s down' % interface)
             os.system('iwconfig %s mode monitor' % interface)
