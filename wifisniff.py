@@ -92,7 +92,7 @@ class WifiSniffDaemon(Daemon):
             tmp_sniffinfo = self.sniffinfo
             self.sniffinfo = {}
 
-            fn = file_name+'_'+datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+            fn = '/overlay/scripts/' + file_name+'_'+datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%fZ")
             with open(fn, 'w') as f:
                 for smac, stime in tmp_sniffinfo.items():
                     f.write("smac: %s; time: %s\n" % (smac, timestamp(stime)))
@@ -187,7 +187,7 @@ class WifiSniffDaemon(Daemon):
         import glob
 
         while 1:
-            for log_file in glob.glob('./snifflog_*'):
+            for log_file in glob.glob('/overlay/scripts/snifflog_*'):
                 if os.path.isfile(log_file) and (int(time.time()) - int(os.path.getctime(log_file))) > 60:
                     with open(log_file, 'r') as f:
                         for line in f:
