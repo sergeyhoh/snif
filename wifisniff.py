@@ -119,21 +119,18 @@ class WifiSniffDaemon(Daemon):
                     else:
                         return False
 
-    @staticmethod
-    def hw_mac_addr(interface):
+    def hw_mac_addr(self, interface):
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         info = fcntl.ioctl(s.fileno(), 0x8927,  struct.pack('256s', interface[:15]))
         return ''.join(['%02x:' % ord(char) for char in info[18:24]])[:-1]
 
-    @staticmethod
-    def mac_hex2int(mac_hex):
+    def mac_hex2int(self, mac_hex):
         if re.search('^([0-9A-F]{2}[:-]){5}([0-9A-F]{2})$', mac_hex, re.IGNORECASE):
             return int(mac_hex.replace(':', ''), 16)
         else:
             return None
 
-    @staticmethod
-    def mac_int2hex(mac_int):
+    def mac_int2hex(self, mac_int):
         if is_int_str(mac_int):
             mac_hex = '%012x' % mac_int
             return ':'.join([mac_hex[i:i+2] for i in range(0, 12, 2)])
