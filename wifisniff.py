@@ -23,9 +23,14 @@ def is_int_str(v):
     return v == '0' or (v if v.find('..') > -1 else v.lstrip('-+').rstrip('0').rstrip('.')).isdigit()
 
 
+def timestamp(date):
+    return int(time.mktime(date.timetuple()))
+
+
 class WifiSniffDaemon(Daemon):
     DEVNULL = open(os.devnull, 'w')
 
+    BEACON_MAC = 27
     # Define the interface name that we will be sniffing from
     INTERFACE = "wlan0"
     # Define tmp file for store mac-address info
@@ -76,22 +81,21 @@ class WifiSniffDaemon(Daemon):
 
         # Store observed client info
         dtn = datetime.now()
-        if sniffinfo.get(pkt.addr2) is None or (dtn - sniffinfo[pkt.addr2]).seconds < self.SAVE_INTERVAL+1:
+        if self.sniffinfo.get(pkt.addr2) is None or (dtn - self.sniffinfo[pkt.addr2]).seconds < self.SAVE_INTERVAL+1:
             print "Source: %s SSID: %s RSSi: %d" % (
                 pkt.addr2, pkt.getlayer(Dot11ProbeReq).info, signal_strength
             )
-            sniffinfo[pkt.addr2] = dtn
+            self.sniffinfo[pkt.addr2] = dtn
 
     def save_sniff_log(self, file_name):
-        global sniffinfo
         while 1:
-            tmp_sniffinfo = sniffinfo
-            sniffinfo = {}
+            tmp_sniffinfo = self.sniffinfo
+            self.sniffinfo = {}
 
             fn = file_name+'_'+datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%fZ")
             with open(fn, 'w') as f:
                 for smac, stime in tmp_sniffinfo.items():
-                    f.write("smac: %s; time: %s\n" % (smac, stime.strftime("%Y-%m-%dT%H:%M:%S.%fZ")))
+                    f.write("smac: %s; time: %s\n" % (smac, timestamp(stime)))
 
             tmp_sniffinfo.clear()
 
@@ -148,12 +152,12 @@ class WifiSniffDaemon(Daemon):
         os.system('ifconfig %s down' % interface)
         os.system('iwconfig %s mode managed' % interface)
         os.system('ifconfig %s up' % interface)
-        return iface
+        return interface
 
     def post_request(self, router_id, device_id, log_time):
         parse_url = "http://paynata.elasticbeanstalk.com/webapi/activities/activity"
         payload = {
-            "beacon_mac": router_id,
+            "beacon_mac": self.BEACON_MAC,
             "client_mac": device_id,
             "timestamp": log_time
         }
