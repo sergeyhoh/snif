@@ -79,10 +79,12 @@ class Daemon:
         except IOError:
                 pid = None
 
-        if pid:
+        if pid and self.check_pid(pid):
                 message = "pidfile %s already exist. Daemon already running?\n"
                 sys.stderr.write(message % self.pidfile)
                 sys.exit(1)
+        elif os.path.isfile(self.pidfile):
+                os.remove(self.pidfile)
 
         # Start the daemon
         self.daemonize()
@@ -131,3 +133,14 @@ class Daemon:
         You should override this method when you subclass Daemon. It will be called after the process has been
         daemonized by start() or restart().
         """
+
+    def check_pid(self, pid):
+        """
+        Check For the existence of a unix pid.
+        """
+        try:
+            os.kill(pid, 0)
+        except OSError:
+            return False
+        else:
+            return True

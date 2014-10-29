@@ -1,0 +1,15 @@
+wifisniff:
+  beacon_mac: 27
+  send_url: 'http://paynata.elasticbeanstalk.com/webapi/activities/activity'
+  get_url: ''
+  interface: 'wlan0'
+  save_interval: 600
+  send_interval: 900
+  ssid: ''
+  ssid_key: ''
+  ipconf:
+    type: 'static'
+    ip: '192.168.0.103'
+    mac: '255.255.255.0'
+    gateway: '192.168.0.254'
+    dns: '8.8.8.8'

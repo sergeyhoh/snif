@@ -1,5 +1,4 @@
 import logging
-
 logging.getLogger("scapy.runtime").setLevel(logging.ERROR)  # Shut up Scapy
 from scapy.all import *
 
@@ -20,6 +19,13 @@ import json
 from daemon import Daemon
 
 
+DEVNULL = open(os.devnull, 'w')
+MAIN_DIR = os.path.dirname(os.path.realpath(__file__))
+CONF_FILE = "wifisniff_conf.yml"
+LOG_FILE = "wifisniff.log"
+PID_FILE = "wifisniff.pid"
+
+
 def is_int_str(v):
     v = str(v).strip()
     return v == '0' or (v if v.find('..') > -1 else v.lstrip('-+').rstrip('0').rstrip('.')).isdigit()
@@ -29,31 +35,103 @@ def timestamp(date):
     return int(time.mktime(date.timetuple()))
 
 
-class WifiSniffDaemon(Daemon):
-    DEVNULL = open(os.devnull, 'w')
+class WifiSniffLogging:
+    def __init__(self):
+        self.logger = logging.getLogger()
+        self.logger.setLevel(logging.DEBUG)
 
-    BEACON_MAC = 27
+        # create console handler and set level to info
+        handler = logging.StreamHandler()
+        handler.setLevel(logging.INFO)
+        formatter = logging.Formatter("%(levelname)s - %(message)s")
+        handler.setFormatter(formatter)
+        self.logger.addHandler(handler)
+
+        # create error file handler and set level to error
+        handler = logging.FileHandler(os.path.join(MAIN_DIR, LOG_FILE), "w", encoding=None, delay="true")
+        handler.setLevel(logging.ERROR)
+        formatter = logging.Formatter("%(levelname)s - %(message)s")
+        handler.setFormatter(formatter)
+        self.logger.addHandler(handler)
+
+        # create debug file handler and set level to debug
+        handler = logging.FileHandler(os.path.join(MAIN_DIR, LOG_FILE), "w")
+        handler.setLevel(logging.DEBUG)
+        formatter = logging.Formatter("%(levelname)s - %(message)s")
+        handler.setFormatter(formatter)
+        self.logger.addHandler(handler)
+
+    def wifisniff_logger(self):
+        return self.logger
+
+
+class WifiSniffDaemon(Daemon):
     # Define the interface name that we will be sniffing from
     INTERFACE = "wlan0"
     # Define tmp file for store mac-address info
-    LOGFILE = "snifflog"
+    LOGGING_NAME = "snifflog"
     # Save and upload intervals
     SAVE_INTERVAL = 600
-    UPLOAD_INTERVAL = 900
+    SEND_INTERVAL = 900
 
     def __init__(self, pidfile):
         Daemon.__init__(self, pidfile)
 
-        # Define last log save time
-        # self.last_save_time = int(time.time())
-
+        # Init logger
+        self.logger = WifiSniffLogging().wifisniff_logger()
         # List to keep track of client MAC addresses
         self.sniffclients = []
         self.sniffclients_info = []
         self.sniffinfo = {}
         self.day_sniffinfo = {}
+        # Main settings
+        self.interface = self.INTERFACE
+        self.save_interval = self.SAVE_INTERVAL
+        self.send_interval = self.SEND_INTERVAL
+        # Upload settings
+        self.beacon_mac, self.post_url, self.get_url = None, None, None
+        # WiFi settings
+        self.ssid, self.ssid_key = None, None
+        # self.ip_type, self.ip_add, self.ip_mask, self.ip_gtw, self.ip_dns = None, None, None, None, None
+        # Load configs from yml file
+        self.load_config()
 
-        self.monitor_on = self.is_monitor_on(self.INTERFACE)
+        self.monitor_on = self.is_monitor_on()
+
+    def load_config(self):
+        """
+        Load config from yml file if exist, and reinitialize some variables
+        :return:
+        """
+        conf_location = "%s/%s" % (MAIN_DIR, CONF_FILE)
+        if os.path.isfile(conf_location):
+            import yaml
+            try:
+                stream = open(conf_location, 'r')
+                settings = yaml.load(stream).get('wifisniff')
+
+                if settings is not None:
+                    self.beacon_mac = settings.get('beacon_mac')
+                    self.post_url = settings.get('post_url')
+                    self.get_url = settings.get('get_url')
+                    self.interface = settings.get('interface')
+                    self.save_interval = settings.get('save_interval')
+                    self.send_interval = settings.get('send_interval')
+                    self.ssid = settings.get('ssid')
+                    self.ssid_key = settings.get('ssid_key')
+
+                    # ipconf = settings.get('ipconf')
+                    # if ipconf is not None:
+                    #     self.ip_type = ipconf.get('type')
+                    #     self.ip_add = ipconf.get('ip')
+                    #     self.ip_mask = ipconf.get('mask')
+                    #     self.ip_gtw = ipconf.get('gateway')
+                    #     self.ip_dns = ipconf.get('dns')
+            except yaml.YAMLError, exc:
+                self.logger.error("Error in configuration file:", exc)
+                if hasattr(exc, 'problem_mark'):
+                    mark = exc.problem_mark
+                    self.logger.error("Error position: (%s:%s)" % (mark.line+1, mark.column+1))
 
     def packet_handler(self, pkt):
         # global last_save_time
@@ -85,13 +163,19 @@ class WifiSniffDaemon(Daemon):
         # Store observed client info
         dtn = datetime.now()
         if self.day_sniffinfo.get(pkt.addr2) is None or self.day_sniffinfo[pkt.addr2].date() < datetime.today().date():
-            print "Source: %s SSID: %s RSSi: %d" % (
-                pkt.addr2, pkt.getlayer(Dot11ProbeReq).info, signal_strength
-            )
+            self.logger.info("Source: %s SSID: %s RSSi: %d Time: %s" % (
+                pkt.addr2, pkt.getlayer(Dot11ProbeReq).info,
+                signal_strength,
+                datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+            ))
             self.sniffinfo[pkt.addr2] = dtn
             self.day_sniffinfo[pkt.addr2] = dtn
 
-    def save_sniff_log(self, file_name):
+    def save_sniff_log(self):
+        """
+        Save logged mac address to file
+        :return:
+        """
         while 1:
             tmp_sniffinfo = self.sniffinfo
 
@@ -99,7 +183,7 @@ class WifiSniffDaemon(Daemon):
             self.day_sniffinfo = {key: value for key, value in self.day_sniffinfo.items() if
                                   value.date() == datetime.today().date()}
 
-            fn = '/overlay/scripts/' + file_name + '_' + datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+            fn = "%s/%s_%s" % (MAIN_DIR, self.LOGGING_NAME, datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%fZ"))
             with open(fn, 'w') as f:
                 for smac, stime in tmp_sniffinfo.items():
                     f.write("smac: %s; time: %s\n" % (smac, timestamp(stime)))
@@ -108,32 +192,70 @@ class WifiSniffDaemon(Daemon):
 
             time.sleep(self.SAVE_INTERVAL)
 
-    def setup_iface(self, interface):
-        if not self.monitor_on:
-            # Start monitor mode on a wireless INTERFACE
-            print 'Start monitor mode on a wireless INTERFACE'
-            return self.enable_mon_mode(interface)
+    def upload_sniff_log(self, hw_mac):
+        """
+        Upload sniffed info to remote server every self.send_interval seconds
+        :param hw_mac:
+        :return:
+        """
+        import glob
 
-    def is_monitor_on(self, interface):
-        proc = Popen(['iwconfig'], stdout=PIPE, stderr=self.DEVNULL)
+        while 1:
+            # Turn wifi device to Station (STA) mode
+            if self.is_monitor_on():
+                self.disable_mon_mode()
+                time.sleep(10)
+            # If device connected to internet send log info
+            if self.is_connected():
+                for log_file in glob.glob("%s/%s_*" % (MAIN_DIR, self.LOGGING_NAME)):
+                    if os.path.isfile(log_file) and (int(time.time()) - int(os.path.getctime(log_file))) > 60:
+                        with open(log_file, 'r') as f:
+                            for line in f:
+                                match = re.search('^smac:\s(.*); time: (.*)$', line, re.IGNORECASE)
+                                if match:
+                                    router_id = self.mac_hex2int(hw_mac)
+                                    device_id = self.mac_hex2int(match.group(1))
+                                    self.post_request(self.beacon_mac, device_id, match.group(2))
+                        os.remove(log_file)
+            # Turn wifi device to Monitor mode
+            if not self.is_monitor_on():
+                self.enable_mon_mode()
+
+            time.sleep(self.send_interval)
+
+    def is_monitor_on(self):
+        """
+        Check if wifi interface in monitor mode
+        :return:
+        """
+        proc = Popen(["iwconfig %s" % self.interface], stdout=PIPE, stderr=DEVNULL)
         for line in proc.communicate()[0].split('\n'):
             if len(line) == 0:
                 continue  # String isn't empty
             if line[0] != ' ':  # Line don't start with space
-                if re.search('^(wlan[0-9])', line).group(1) == interface:
-                    if 'Mode:Monitor' in line:
-                        return True
-                    else:
-                        return False
+                if re.search('^(\w+)\s\.*(?:Mode:Monitor)', line).group(1) == self.interface:
+                    return True
+                else:
+                    return False
 
     @staticmethod
-    def hw_mac_addr(interface):
+    def hw_mac_addr(iface_name):
+        """
+        Detect interface mac address
+        :param iface_name:
+        :return:
+        """
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        info = fcntl.ioctl(s.fileno(), 0x8927, struct.pack('256s', interface[:15]))
+        info = fcntl.ioctl(s.fileno(), 0x8927, struct.pack('256s', iface_name[:15]))
         return ''.join(['%02x:' % ord(char) for char in info[18:24]])[:-1]
 
     @staticmethod
     def mac_hex2int(mac_hex):
+        """
+        Convert hexadecimal mac notation to integer
+        :param mac_hex:
+        :return:
+        """
         if re.search('^([0-9A-F]{2}[:-]){5}([0-9A-F]{2})$', mac_hex, re.IGNORECASE):
             return int(mac_hex.replace(':', ''), 16)
         else:
@@ -141,37 +263,90 @@ class WifiSniffDaemon(Daemon):
 
     @staticmethod
     def mac_int2hex(mac_int):
+        """
+        Convert integer mac notation to hexadecimal
+        :param mac_int:
+        :return:
+        """
         if is_int_str(mac_int):
             mac_hex = '%012x' % mac_int
             return ':'.join([mac_hex[i:i + 2] for i in range(0, 12, 2)])
 
-    def enable_mon_mode(self, interface):
-        print 'Starting monitor mode off ' + interface
+    @staticmethod
+    def is_connected():
         try:
-            os.system('ifconfig %s down' % interface)
-            os.system('iwconfig %s mode monitor' % interface)
-            os.system('ifconfig %s up' % interface)
-            return interface
-        except Exception:
-            sys.exit('Could not start monitor mode')
+            # see if we can resolve the host name -- tells us if there is
+            # a DNS listening
+            host = socket.gethostbyname('www.google.com')
+            # connect to the host -- tells us if the host is actually reachable
+            socket.create_connection((host, 80), 2)
+            return True
+        except:
+            pass
+        return False
 
-    def disable_mon_mode(self, interface):
-        os.system('ifconfig %s down' % interface)
-        os.system('iwconfig %s mode managed' % interface)
-        os.system('ifconfig %s up' % interface)
-        return interface
+    def enable_mon_mode(self):
+        """
+        Turn off Station (STA) mode on wifi adapter, and turn on Monitor mode
+        :return:
+        """
+        match = re.search('^([a-z]+)([0-9]+)$', self.interface, re.IGNORECASE)
+        if match:
+            try:
+                iface_num = match.group(2)
+
+                os.system('uci del wireless.@wifi-iface[%s].ssid' % iface_num)
+                os.system('uci del wireless.@wifi-iface[%s].key' % iface_num)
+                os.system('uci del wireless.@wifi-iface[%s].encryption' % iface_num)
+                os.system('uci set wireless.@wifi-iface[%s].mode=monitor' % iface_num)
+                os.system('uci set wireless.@wifi-iface[%s].hidden=1' % iface_num)
+                os.system('uci commit wireless')
+                os.system('wifi')
+            except Exception, exc:
+                self.logger.error('Could not start monitor mode', exc)
+                sys.exit('Could not start monitor mode')
+
+    def disable_mon_mode(self):
+        """
+        Turn off Monitor mode on wifi adapter, and turn on Station (STA) mode
+        :return:
+        """
+        match = re.search('^([a-z]+)([0-9]+)$', self.interface, re.IGNORECASE)
+        if match and self.ssid is not None and self.ssid_key is not None:
+            try:
+                iface_num = match.group(2)
+
+                os.system('uci del wireless.@wifi-iface[%s].hidden' % iface_num)
+                os.system('uci set wireless.@wifi-iface[%s].mode=sta' % iface_num)
+                os.system('uci set wireless.@wifi-iface[%s].ssid=%s' % (iface_num, self.ssid))
+                os.system('uci set wireless.@wifi-iface[%s].encryption=psk2' % iface_num)
+                os.system('uci set wireless.@wifi-iface[%s].key=%s' % (iface_num, self.ssid_key))
+                os.system('uci commit wireless')
+                os.system('wifi')
+            except Exception, exc:
+                self.logger.error('Could not off monitor mode', exc)
+                sys.exit('Could not off monitor mode')
 
     def post_request(self, router_id, device_id, log_time):
-        parse_url = "http://paynata.elasticbeanstalk.com/webapi/activities/activity"
+        """
+        Send sniffed mac address to remote server
+        :param router_id:
+        :param device_id:
+        :param log_time:
+        :return:
+        """
+        if not self.post_url:
+            return False
+
         payload = {
-            "beacon_mac": self.BEACON_MAC,
+            "beacon_mac": router_id,
             "client_mac": device_id,
             "timestamp": log_time
         }
         headers = {
             'Content-Type': 'application/json'
         }
-        r = requests.post(parse_url, data=json.dumps(payload), headers=headers)
+        r = requests.post(self.post_url, data=json.dumps(payload), headers=headers)
 
         if r.status_code == 200 or r.status_code == 201:
             return True
@@ -179,60 +354,41 @@ class WifiSniffDaemon(Daemon):
             return False
 
     def get_request(self):
-        parse_url = "http://paynata.elasticbeanstalk.com/webapi/activities/activity"
+        """
+        Get some info from remote server
+        :return:
+        """
+        if not self.get_url:
+            return False
+
         headers = {
             'Content-Type': 'application/json'
         }
-        r = requests.get(parse_url, headers=headers)
+        r = requests.get(self.get_url, headers=headers)
 
         if r.status_code == 200:
             return r.json()
         else:
             return None
 
-    def upload_sniff_log(self, hw_mac):
-        import glob
-
-        while 1:
-            for log_file in glob.glob('/overlay/scripts/snifflog_*'):
-                if os.path.isfile(log_file) and (int(time.time()) - int(os.path.getctime(log_file))) > 60:
-                    with open(log_file, 'r') as f:
-                        for line in f:
-                            match = re.search('^smac:\s(.*); time: (.*)$', line, re.IGNORECASE)
-                            if match:
-                                router_id = self.mac_hex2int(hw_mac)
-                                device_id = self.mac_hex2int(match.group(1))
-                                self.post_request(router_id, device_id, match.group(2))
-                    os.remove(log_file)
-
-            time.sleep(self.UPLOAD_INTERVAL)
-
-    def stop_sniff(self, signal, frame):
-        if self.monitor_on:
-            # disable_mon_mode(INTERFACE)
-            sys.exit('\nClosing')
-        else:
-            sys.exit('\nClosing')
-
     def run(self):
-        hw_mac = self.hw_mac_addr(self.INTERFACE)
-        # setup_iface(self.INTERFACE)
+        self.logger.info('Start monitor mode on a wireless INTERFACE')
+        self.enable_mon_mode()
 
+        hw_mac = self.hw_mac_addr(self.interface)
         # Start sniff log uploading
         upload = Thread(target=self.upload_sniff_log, args=(hw_mac,))
         upload.daemon = True
         upload.start()
 
         # Start files uploading
-        save = Thread(target=self.save_sniff_log, args=(self.LOGFILE,))
+        save = Thread(target=self.save_sniff_log)
         save.daemon = True
         save.start()
 
-        # signal(SIGINT, self.stop_sniff)
-
-        print "Starting scan at: %s" % datetime.now()
-        print "Router MAC: %s" % hw_mac
-        print "Monitor Mode: %s" % self.monitor_on
+        self.logger.info("Starting scan at: %s" % datetime.now())
+        self.logger.info("Router MAC: %s" % hw_mac)
+        self.logger.info("Monitor Mode: %s" % self.monitor_on)
         sniff(iface=self.INTERFACE, prn=self.packet_handler, store=0, filter='type mgt subtype probe-req')
 
 
@@ -240,7 +396,7 @@ if __name__ == "__main__":
     if os.geteuid():
         sys.exit('You must run script under root')
 
-    daemon = WifiSniffDaemon('/overlay/scripts/wifisniff.pid')
+    daemon = WifiSniffDaemon("%s/%s" % (MAIN_DIR, PID_FILE))
     if len(sys.argv) == 2:
         if 'start' == sys.argv[1]:
             daemon.start()
@@ -255,6 +411,3 @@ if __name__ == "__main__":
     else:
         print "usage: %s start|stop|restart" % sys.argv[0]
         sys.exit(2)
-
-
-
