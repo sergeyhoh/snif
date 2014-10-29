@@ -173,7 +173,7 @@ class WifiSniffDaemon(Daemon):
             # If device connected to internet send log info
             if self.is_connected():
                 self.logger.info("Send collected info at %s" % datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%fZ"))
-                
+
                 for log_file in glob.glob("%s/%s_*" % (MAIN_DIR, self.LOGGING_NAME)):
                     if os.path.isfile(log_file) and (int(time.time()) - int(os.path.getctime(log_file))) > 60:
                         with open(log_file, 'r') as f:
@@ -293,7 +293,7 @@ class WifiSniffDaemon(Daemon):
                 os.system("uci commit wireless")
                 os.system("wifi")
 
-                time.sleep(5)
+                time.sleep(20)
             except Exception, exc:
                 self.logger.error('Could not off monitor mode', exc)
                 sys.exit('Could not off monitor mode')
