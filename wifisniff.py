@@ -228,15 +228,16 @@ class WifiSniffDaemon(Daemon):
         Check if wifi interface in monitor mode
         :return:
         """
-        proc = Popen(["iwconfig %s" % self.interface], stdout=PIPE, stderr=DEVNULL)
+        proc = Popen(['iwconfig'], stdout=PIPE, stderr=DEVNULL)
         for line in proc.communicate()[0].split('\n'):
             if len(line) == 0:
                 continue  # String isn't empty
             if line[0] != ' ':  # Line don't start with space
-                if re.search('^(\w+)\s\.*(?:Mode:Monitor)', line).group(1) == self.interface:
-                    return True
-                else:
-                    return False
+                if re.search('^([a-z0-9]+)\s+', line).group(1) == self.interface:
+                    if 'Mode:Monitor' in line:
+                        return True
+                    else:
+                        return False
 
     @staticmethod
     def hw_mac_addr(iface_name):
@@ -396,8 +397,8 @@ if __name__ == "__main__":
     if os.geteuid():
         sys.exit('You must run script under root')
 
-    daemon = WifiSniffDaemon("%s/%s" % (MAIN_DIR, PID_FILE))
     if len(sys.argv) == 2:
+        daemon = WifiSniffDaemon("%s/%s" % (MAIN_DIR, PID_FILE))
         if 'start' == sys.argv[1]:
             daemon.start()
         elif 'stop' == sys.argv[1]:
