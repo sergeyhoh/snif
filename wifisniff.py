@@ -1,8 +1,5 @@
 import logging
-logging.getLogger("scapy.runtime").setLevel(logging.ERROR)  # Shut up Scapy
-from scapy.all import *
 
-conf.verb = 0
 import os
 import re
 import sys
@@ -10,7 +7,6 @@ import time
 from datetime import datetime
 from threading import Thread, Lock
 from subprocess import Popen, PIPE
-from signal import SIGINT, signal
 import socket
 import struct
 import fcntl
@@ -133,44 +129,6 @@ class WifiSniffDaemon(Daemon):
                     mark = exc.problem_mark
                     self.logger.error("Error position: (%s:%s)" % (mark.line+1, mark.column+1))
 
-    def packet_handler(self, pkt):
-        # global last_save_time
-
-        mgmt_type = 0  # management frame type
-        # 3 management frame subtypes sent exclusively by clients
-        mgmt_sub_types = 4
-
-        # Make sure the packet has the Scapy Dot11 layer present
-        if pkt.haslayer(Dot11):
-            # Check to make sure this is a management frame (type=0) and that
-            # the subtype is one of management frame subtypes indicating a
-            # a wireless client
-            if pkt.type == mgmt_type and pkt.subtype == mgmt_sub_types:
-                self.collect_packet_info(pkt)
-
-    def collect_packet_info(self, pkt):
-        # Probe Request Captured
-        try:
-            extra = pkt.notdecoded
-        except:
-            extra = None
-
-        if extra is not None:
-            signal_strength = -(256 - ord(extra[-4:-3]))
-        else:
-            signal_strength = -100
-
-        # Store observed client info
-        dtn = datetime.now()
-        if self.day_sniffinfo.get(pkt.addr2) is None or self.day_sniffinfo[pkt.addr2].date() < datetime.today().date():
-            self.logger.info("Source: %s SSID: %s RSSi: %d Time: %s" % (
-                pkt.addr2, pkt.getlayer(Dot11ProbeReq).info,
-                signal_strength,
-                datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-            ))
-            self.sniffinfo[pkt.addr2] = dtn
-            self.day_sniffinfo[pkt.addr2] = dtn
-
     def save_sniff_log(self):
         """
         Save logged mac address to file
@@ -190,7 +148,7 @@ class WifiSniffDaemon(Daemon):
 
             tmp_sniffinfo.clear()
 
-            time.sleep(self.SAVE_INTERVAL)
+            time.sleep(self.save_interval)
 
     def upload_sniff_log(self, hw_mac):
         """
@@ -201,6 +159,13 @@ class WifiSniffDaemon(Daemon):
         import glob
 
         while 1:
+            # Start files uploading
+            if self.monitor_on is True:
+                snif = Thread(target=self.sniff_pkt)
+                snif.daemon = True
+                snif.start()
+            time.sleep(self.send_interval)
+
             # Turn wifi device to Station (STA) mode
             if self.is_monitor_on():
                 self.disable_mon_mode()
@@ -220,8 +185,6 @@ class WifiSniffDaemon(Daemon):
             # Turn wifi device to Monitor mode
             if not self.is_monitor_on():
                 self.enable_mon_mode()
-
-            time.sleep(self.send_interval)
 
     def is_monitor_on(self):
         """
@@ -295,7 +258,6 @@ class WifiSniffDaemon(Daemon):
         if match:
             try:
                 iface_num = match.group(2)
-
                 os.system('uci del wireless.@wifi-iface[%s].ssid' % iface_num)
                 os.system('uci del wireless.@wifi-iface[%s].key' % iface_num)
                 os.system('uci del wireless.@wifi-iface[%s].encryption' % iface_num)
@@ -303,6 +265,9 @@ class WifiSniffDaemon(Daemon):
                 os.system('uci set wireless.@wifi-iface[%s].hidden=1' % iface_num)
                 os.system('uci commit wireless')
                 os.system('wifi')
+
+                time.sleep(5)
+                self.monitor_on = True
             except Exception, exc:
                 self.logger.error('Could not start monitor mode', exc)
                 sys.exit('Could not start monitor mode')
@@ -315,8 +280,9 @@ class WifiSniffDaemon(Daemon):
         match = re.search('^([a-z]+)([0-9]+)$', self.interface, re.IGNORECASE)
         if match and self.ssid is not None and self.ssid_key is not None:
             try:
-                iface_num = match.group(2)
+                self.monitor_on = False
 
+                iface_num = match.group(2)
                 os.system('uci del wireless.@wifi-iface[%s].hidden' % iface_num)
                 os.system('uci set wireless.@wifi-iface[%s].mode=sta' % iface_num)
                 os.system('uci set wireless.@wifi-iface[%s].ssid=%s' % (iface_num, self.ssid))
@@ -324,6 +290,8 @@ class WifiSniffDaemon(Daemon):
                 os.system('uci set wireless.@wifi-iface[%s].key=%s' % (iface_num, self.ssid_key))
                 os.system('uci commit wireless')
                 os.system('wifi')
+
+                time.sleep(5)
             except Exception, exc:
                 self.logger.error('Could not off monitor mode', exc)
                 sys.exit('Could not off monitor mode')
@@ -372,6 +340,31 @@ class WifiSniffDaemon(Daemon):
         else:
             return None
 
+    def sniff_pkt(self):
+        raw_socket = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(0x0003))
+        raw_socket.bind((self.interface, 0x0003))
+        while True:
+            if self.monitor_on is False:
+                break
+
+            pkt = raw_socket.recvfrom(2048)[0]
+            if pkt[26] == "\x40":
+                if ord(pkt[63]) > 0:
+                    mac = self.mac_addr(pkt[36:42])
+                    self.collect_mac_address(mac)
+
+    def collect_mac_address(self, mac_addr):
+        # Store observed client info
+        dtn = datetime.now()
+        if self.day_sniffinfo.get(mac_addr) is None or self.day_sniffinfo[mac_addr].date() < datetime.today().date():
+            self.logger.info("Source: %s Time: %s" % (mac_addr, datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%fZ")))
+            self.sniffinfo[mac_addr] = dtn
+            self.day_sniffinfo[mac_addr] = dtn
+
+    def mac_addr(self, a):
+        b = "%.2x:%.2x:%.2x:%.2x:%.2x:%.2x" % (ord(a[0]), ord(a[1]), ord(a[2]), ord(a[3]), ord(a[4]), ord(a[5]))
+        return b
+
     def run(self):
         self.logger.info('Start monitor mode on a wireless INTERFACE')
         self.enable_mon_mode()
@@ -383,14 +376,14 @@ class WifiSniffDaemon(Daemon):
         upload.start()
 
         # Start files uploading
-        save = Thread(target=self.save_sniff_log)
-        save.daemon = True
-        save.start()
+        # save = Thread(target=self.save_sniff_log)
+        # save.daemon = True
+        # save.start()
+        self.save_sniff_log()
 
         self.logger.info("Starting scan at: %s" % datetime.now())
         self.logger.info("Router MAC: %s" % hw_mac)
         self.logger.info("Monitor Mode: %s" % self.monitor_on)
-        sniff(iface=self.INTERFACE, prn=self.packet_handler, store=0, filter='type mgt subtype probe-req')
 
 
 if __name__ == "__main__":
