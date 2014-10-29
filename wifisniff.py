@@ -172,6 +172,8 @@ class WifiSniffDaemon(Daemon):
                 time.sleep(10)
             # If device connected to internet send log info
             if self.is_connected():
+                self.logger.info("Send collected info at %s" % datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%fZ"))
+                
                 for log_file in glob.glob("%s/%s_*" % (MAIN_DIR, self.LOGGING_NAME)):
                     if os.path.isfile(log_file) and (int(time.time()) - int(os.path.getctime(log_file))) > 60:
                         with open(log_file, 'r') as f:
@@ -258,13 +260,13 @@ class WifiSniffDaemon(Daemon):
         if match:
             try:
                 iface_num = match.group(2)
-                os.system('uci del wireless.@wifi-iface[%s].ssid' % iface_num)
-                os.system('uci del wireless.@wifi-iface[%s].key' % iface_num)
-                os.system('uci del wireless.@wifi-iface[%s].encryption' % iface_num)
-                os.system('uci set wireless.@wifi-iface[%s].mode=monitor' % iface_num)
-                os.system('uci set wireless.@wifi-iface[%s].hidden=1' % iface_num)
-                os.system('uci commit wireless')
-                os.system('wifi')
+                os.system("uci del wireless.@wifi-iface[%s].ssid" % iface_num)
+                os.system("uci del wireless.@wifi-iface[%s].key" % iface_num)
+                os.system("uci del wireless.@wifi-iface[%s].encryption" % iface_num)
+                os.system("uci set wireless.@wifi-iface[%s].mode=monitor" % iface_num)
+                os.system("uci set wireless.@wifi-iface[%s].hidden=1" % iface_num)
+                os.system("uci commit wireless")
+                os.system("wifi")
 
                 time.sleep(5)
                 self.monitor_on = True
@@ -283,13 +285,13 @@ class WifiSniffDaemon(Daemon):
                 self.monitor_on = False
 
                 iface_num = match.group(2)
-                os.system('uci del wireless.@wifi-iface[%s].hidden' % iface_num)
-                os.system('uci set wireless.@wifi-iface[%s].mode=sta' % iface_num)
-                os.system('uci set wireless.@wifi-iface[%s].ssid=%s' % (iface_num, self.ssid))
-                os.system('uci set wireless.@wifi-iface[%s].encryption=psk2' % iface_num)
-                os.system('uci set wireless.@wifi-iface[%s].key=%s' % (iface_num, self.ssid_key))
-                os.system('uci commit wireless')
-                os.system('wifi')
+                os.system("uci del wireless.@wifi-iface[%s].hidden" % iface_num)
+                os.system("uci set wireless.@wifi-iface[%s].mode=sta" % iface_num)
+                os.system("uci set wireless.@wifi-iface[%s].ssid='%s'" % (iface_num, self.ssid))
+                os.system("uci set wireless.@wifi-iface[%s].encryption=psk2" % iface_num)
+                os.system("uci set wireless.@wifi-iface[%s].key='%s'" % (iface_num, self.ssid_key))
+                os.system("uci commit wireless")
+                os.system("wifi")
 
                 time.sleep(5)
             except Exception, exc:
