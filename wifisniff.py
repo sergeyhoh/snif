@@ -368,8 +368,12 @@ class WifiSniffDaemon(Daemon):
     def run(self):
         self.logger.info('Start monitor mode on a wireless INTERFACE')
         self.enable_mon_mode()
-
         hw_mac = self.hw_mac_addr(self.interface)
+
+        self.logger.info("Starting scan at: %s" % datetime.now())
+        self.logger.info("Router MAC: %s" % hw_mac)
+        self.logger.info("Monitor Mode: %s" % self.monitor_on)
+
         # Start sniff log uploading
         upload = Thread(target=self.upload_sniff_log, args=(hw_mac,))
         upload.daemon = True
@@ -380,10 +384,6 @@ class WifiSniffDaemon(Daemon):
         # save.daemon = True
         # save.start()
         self.save_sniff_log()
-
-        self.logger.info("Starting scan at: %s" % datetime.now())
-        self.logger.info("Router MAC: %s" % hw_mac)
-        self.logger.info("Monitor Mode: %s" % self.monitor_on)
 
 
 if __name__ == "__main__":
