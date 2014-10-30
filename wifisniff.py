@@ -66,6 +66,8 @@ class WifiSniffDaemon(Daemon):
     INTERFACE = "wlan0"
     # Define tmp file for store mac-address info
     LOGGING_NAME = "snifflog"
+    # Cache file name for store mac-address info
+    CACHE_NAME = ".wifisniff.cache"
     # Save and upload intervals
     SAVE_INTERVAL = 600
     SEND_INTERVAL = 900
@@ -141,14 +143,22 @@ class WifiSniffDaemon(Daemon):
             self.day_sniffinfo = {key: value for key, value in self.day_sniffinfo.items() if
                                   value.date() == datetime.today().date()}
 
-            fn = "%s/%s_%s" % (MAIN_DIR, self.LOGGING_NAME, datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%fZ"))
-            with open(fn, 'w') as f:
-                for smac, stime in tmp_sniffinfo.items():
-                    f.write("smac: %s; time: %s\n" % (smac, timestamp(stime)))
+            filename = "%s_%s" % (self.LOGGING_NAME, datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%fZ"))
+            # Save sniffinfo for send
+            self.save_sniffinfo_to_file(filename, tmp_sniffinfo)
+            # Save day sniffinfo to cache
+            self.save_sniffinfo_to_file(self.CACHE_NAME, self.day_sniffinfo)
 
             tmp_sniffinfo.clear()
 
             time.sleep(self.save_interval)
+
+    @staticmethod
+    def save_sniffinfo_to_file(filename, sniffinfo):
+        fn = "%s/%s" % (MAIN_DIR, filename)
+        with open(fn, 'w') as f:
+            for smac, stime in sniffinfo.items():
+                f.write("smac: %s; time: %s\n" % (smac, timestamp(stime)))
 
     def upload_sniff_log(self, hw_mac):
         """
@@ -159,34 +169,41 @@ class WifiSniffDaemon(Daemon):
         import glob
 
         while 1:
-            # Start files uploading
             if self.monitor_on is True:
-                snif = Thread(target=self.sniff_pkt)
-                snif.daemon = True
-                snif.start()
+                try:
+                    # Start sniff
+                    snif = Thread(target=self.sniff_pkt)
+                    snif.daemon = True
+                    snif.start()
+                except Exception, exc:
+                    self.logger.error("Error while sniff:", exc)
+
             time.sleep(self.send_interval)
 
-            # Turn wifi device to Station (STA) mode
-            if self.is_monitor_on():
-                self.disable_mon_mode()
-                time.sleep(10)
-            # If device connected to internet send log info
-            if self.is_connected():
-                self.logger.info("Send collected info at %s" % datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%fZ"))
+            try:
+                # Turn wifi device to Station (STA) mode
+                if self.is_monitor_on():
+                    self.disable_mon_mode()
+                    time.sleep(10)
+                # If device connected to internet send log info
+                if self.is_connected():
+                    self.logger.info("Send collected info at %s" % datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%fZ"))
 
-                for log_file in glob.glob("%s/%s_*" % (MAIN_DIR, self.LOGGING_NAME)):
-                    if os.path.isfile(log_file) and (int(time.time()) - int(os.path.getctime(log_file))) > 60:
-                        with open(log_file, 'r') as f:
-                            for line in f:
-                                match = re.search('^smac:\s(.*); time: (.*)$', line, re.IGNORECASE)
-                                if match:
-                                    router_id = self.mac_hex2int(hw_mac)
-                                    device_id = self.mac_hex2int(match.group(1))
-                                    self.post_request(self.beacon_mac, device_id, match.group(2))
-                        os.remove(log_file)
-            # Turn wifi device to Monitor mode
-            if not self.is_monitor_on():
-                self.enable_mon_mode()
+                    for log_file in glob.glob("%s/%s_*" % (MAIN_DIR, self.LOGGING_NAME)):
+                        if os.path.isfile(log_file) and (int(time.time()) - int(os.path.getctime(log_file))) > 60:
+                            with open(log_file, 'r') as f:
+                                for line in f:
+                                    match = re.search('^smac:\s(.*); time: (.*)$', line, re.IGNORECASE)
+                                    if match:
+                                        router_id = self.mac_hex2int(hw_mac)
+                                        device_id = self.mac_hex2int(match.group(1))
+                                        self.post_request(self.beacon_mac, device_id, match.group(2))
+                            os.remove(log_file)
+                # Turn wifi device to Monitor mode
+                if not self.is_monitor_on():
+                    self.enable_mon_mode()
+            except Exception, exc:
+                self.logger.error("Error while send logged data to remote server:", exc)
 
     def is_monitor_on(self):
         """
@@ -363,7 +380,8 @@ class WifiSniffDaemon(Daemon):
             self.sniffinfo[mac_addr] = dtn
             self.day_sniffinfo[mac_addr] = dtn
 
-    def mac_addr(self, a):
+    @staticmethod
+    def mac_addr(a):
         b = "%.2x:%.2x:%.2x:%.2x:%.2x:%.2x" % (ord(a[0]), ord(a[1]), ord(a[2]), ord(a[3]), ord(a[4]), ord(a[5]))
         return b
 
@@ -375,6 +393,20 @@ class WifiSniffDaemon(Daemon):
         self.logger.info("Starting scan at: %s" % datetime.now())
         self.logger.info("Router MAC: %s" % hw_mac)
         self.logger.info("Monitor Mode: %s" % self.monitor_on)
+
+        # Load day sniffinfo from cache file
+        cache_file = "%s/%s" % (MAIN_DIR, self.CACHE_NAME)
+        if os.path.isfile(cache_file):
+            try:
+                with open(cache_file, 'r') as f:
+                    for line in f:
+                        match = re.search('^smac:\s(.*); time: (.*)$', line, re.IGNORECASE)
+                        if match:
+                            mac_addr = self.mac_hex2int(match.group(1))
+                            dtn = datetime.fromtimestamp(int(match.group(2)))
+                            self.day_sniffinfo[mac_addr] = dtn
+            except Exception, exc:
+                self.logger.error("Error while loading day sniffinfo from cache:", exc)
 
         # Start sniff log uploading
         upload = Thread(target=self.upload_sniff_log, args=(hw_mac,))

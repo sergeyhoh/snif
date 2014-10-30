@@ -1,6 +1,6 @@
 wifisniff:
   beacon_mac: 27
-  send_url: 'http://paynata.elasticbeanstalk.com/webapi/activities/activity'
+  post_url: 'http://paynata.elasticbeanstalk.com/webapi/activities/activity'
   get_url: ''
   interface: 'wlan0'
   save_interval: 600
