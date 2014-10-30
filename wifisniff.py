@@ -199,6 +199,8 @@ class WifiSniffDaemon(Daemon):
                                         device_id = self.mac_hex2int(match.group(1))
                                         self.post_request(self.beacon_mac, device_id, match.group(2))
                             os.remove(log_file)
+                else:
+                    self.logger.warning("Can't connect to net at %s" % datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%fZ"))
                 # Turn wifi device to Monitor mode
                 if not self.is_monitor_on():
                     self.enable_mon_mode()
@@ -402,7 +404,7 @@ class WifiSniffDaemon(Daemon):
                     for line in f:
                         match = re.search('^smac:\s(.*); time: (.*)$', line, re.IGNORECASE)
                         if match:
-                            mac_addr = self.mac_hex2int(match.group(1))
+                            mac_addr = match.group(1)
                             dtn = datetime.fromtimestamp(int(match.group(2)))
                             self.day_sniffinfo[mac_addr] = dtn
             except Exception, exc:
