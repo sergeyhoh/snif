@@ -89,7 +89,8 @@ class WifiSniffDaemon(Daemon):
         # Upload settings
         self.beacon_mac, self.post_url, self.get_url = None, None, None
         # WiFi settings
-        self.ssid, self.ssid_key = None, None
+        self.ssid, self.encryption, self.ssid_key = None, None, None
+        self.ssid_key1, self.ssid_key2, self.ssid_key3, self.ssid_key4 = None, None, None, None
         # self.ip_type, self.ip_add, self.ip_mask, self.ip_gtw, self.ip_dns = None, None, None, None, None
         # Load configs from yml file
         self.load_config()
@@ -116,7 +117,12 @@ class WifiSniffDaemon(Daemon):
                     self.save_interval = settings.get('save_interval')
                     self.send_interval = settings.get('send_interval')
                     self.ssid = settings.get('ssid')
+                    self.encryption = settings.get('encryption')
                     self.ssid_key = settings.get('ssid_key')
+                    self.ssid_key1 = settings.get('ssid_key1')
+                    self.ssid_key2 = settings.get('ssid_key2')
+                    self.ssid_key3 = settings.get('ssid_key3')
+                    self.ssid_key4 = settings.get('ssid_key4')
 
                     # ipconf = settings.get('ipconf')
                     # if ipconf is not None:
@@ -299,7 +305,7 @@ class WifiSniffDaemon(Daemon):
         :return:
         """
         match = re.search('^([a-z]+)([0-9]+)$', self.interface, re.IGNORECASE)
-        if match and self.ssid is not None and self.ssid_key is not None:
+        if match and self.ssid is not None and self.encryption is not None:
             try:
                 self.monitor_on = False
 
@@ -307,8 +313,17 @@ class WifiSniffDaemon(Daemon):
                 os.system("uci del wireless.@wifi-iface[%s].hidden" % iface_num)
                 os.system("uci set wireless.@wifi-iface[%s].mode=sta" % iface_num)
                 os.system("uci set wireless.@wifi-iface[%s].ssid='%s'" % (iface_num, self.ssid))
-                os.system("uci set wireless.@wifi-iface[%s].encryption=psk2" % iface_num)
-                os.system("uci set wireless.@wifi-iface[%s].key='%s'" % (iface_num, self.ssid_key))
+                os.system("uci set wireless.@wifi-iface[%s].encryption='%s'" % (iface_num, self.encryption))
+                if self.ssid_key:
+                    os.system("uci set wireless.@wifi-iface[%s].key='%s'" % (iface_num, self.ssid_key))
+                if self.ssid_key1:
+                    os.system("uci set wireless.@wifi-iface[%s].key1='%s'" % (iface_num, self.ssid_key1))
+                if self.ssid_key2:
+                    os.system("uci set wireless.@wifi-iface[%s].key2='%s'" % (iface_num, self.ssid_key2))
+                if self.ssid_key3:
+                    os.system("uci set wireless.@wifi-iface[%s].key3='%s'" % (iface_num, self.ssid_key3))
+                if self.ssid_key4:
+                    os.system("uci set wireless.@wifi-iface[%s].key4='%s'" % (iface_num, self.ssid_key4))
                 os.system("uci commit wireless")
                 os.system("wifi")
 

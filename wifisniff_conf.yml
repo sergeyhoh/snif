@@ -6,4 +6,5 @@ wifisniff:
   save_interval: 600
   send_interval: 900
   ssid: ''
+  encryption: ''
   ssid_key: ''
